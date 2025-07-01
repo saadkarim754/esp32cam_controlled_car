@@ -24,6 +24,11 @@
 #include "esp32-hal-log.h"
 #endif
 
+// Add these declarations at the top of app_httpd.cpp
+extern void handleCarControl(String command, int speed);
+extern String getCurrentDirection();
+extern int getCurrentSpeed();
+
 // Enable LED FLASH setting
 #define CONFIG_LED_ILLUMINATOR_ENABLED 1
 
@@ -37,6 +42,35 @@ int led_duty = 0;
 bool isStreaming = false;
 
 #endif
+
+// Add this handler function in app_httpd.cpp
+static esp_err_t car_handler(httpd_req_t *req) {
+    char buf[128];
+    size_t buf_len;
+    char cmd[32] = {0};
+    char speed_str[16] = {0};
+    
+    buf_len = httpd_req_get_url_query_len(req) + 1;
+    if (buf_len > 1) {
+        if (httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
+            if (httpd_query_key_value(buf, "cmd", cmd, sizeof(cmd)) == ESP_OK &&
+                httpd_query_key_value(buf, "speed", speed_str, sizeof(speed_str)) == ESP_OK) {
+                
+                String command = String(cmd);
+                int speed = atoi(speed_str);
+                
+                handleCarControl(command, speed);
+                
+                httpd_resp_set_type(req, "text/plain");
+                httpd_resp_send(req, "OK", 2);
+                return ESP_OK;
+            }
+        }
+    }
+    
+    httpd_resp_send_404(req);
+    return ESP_FAIL;
+}
 
 typedef struct {
   httpd_req_t *req;
@@ -817,6 +851,20 @@ void startCameraServer() {
 #endif
   };
 
+  
+  httpd_uri_t car_uri = {
+    .uri = "/car",
+    .method = HTTP_GET,
+    .handler = car_handler,
+    .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
+};
+
   ra_filter_init(&ra_filter, 20);
 
   log_i("Starting web server on port: '%d'", config.server_port);
@@ -832,6 +880,7 @@ void startCameraServer() {
     httpd_register_uri_handler(camera_httpd, &greg_uri);
     httpd_register_uri_handler(camera_httpd, &pll_uri);
     httpd_register_uri_handler(camera_httpd, &win_uri);
+    httpd_register_uri_handler(camera_httpd, &car_uri);
   }
 
   config.server_port += 1;
